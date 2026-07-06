@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (
     QMenu, QFileDialog
 )
 from PySide6.QtGui import QColor, QPen, QPainterPath, QAction, QCursor
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtCore import Qt, QPointF, QTimer  # 引入 QTimer
+from PySide6.QtCore import QRectF
 
 # 引入子模块
 from models import StudyNode
@@ -159,6 +160,7 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         self.setWindowTitle("the tree")
 
     def route_to_workspace(self, plan_id, file_path):
+        """进入图谱画布工作区"""
         self.current_plan_id = plan_id
         self.current_plan_path = file_path
 
@@ -168,24 +170,36 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             if plan["id"] == plan_id:
                 self.current_workspace_theme_idx = plan.get("theme_index", 0)
                 break
-                
+
+        # 1. 切换页面状态和路由索引
         self.current_page_idx = 1
         self.central_stack.setCurrentIndex(1)
         
+        # 2. 应用样式并刷新工作区 UI
         self.apply_theme_styles()
         self.refresh_ui()
         
         self.setWindowTitle(f"当前学习路径规划中 - {self.root_node.name}")
         
-        if self.root_node and self.root_node.node_id in self.node_positions:
-            pos = self.node_positions[self.root_node.node_id]
-            self.view.centerOn(pos[0] + 90, pos[1] + 35)
+        # 3. 延时安全居中定位到根节点
+        if self.root_node:
+            QTimer.singleShot(50, lambda: self.center_on_node(self.root_node.node_id))
 
+        # 4. 更新最后活跃时间
         for plan in self.library_manifest.get("plans", []):
             if plan["id"] == self.current_plan_id:
                 plan["last_active"] = datetime.date.today().strftime("%Y-%m-%d")
                 break
         self.save_library_manifest()
+
+    def center_on_node(self, node_id):
+        """安全居中定位到指定节点"""
+        if not node_id or self.current_page_idx != 1:
+            return
+        if node_id in self.node_positions:
+            pos = self.node_positions[node_id]
+            # 加上节点尺寸的一半 (180x70) 以定位到卡片中心
+            self.view.centerOn(pos[0] + 90, pos[1] + 35)
 
     def get_current_theme_class(self):
         if getattr(self, "current_page_idx", 0) == 0:
@@ -314,6 +328,10 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             
         self.refresh_ui(force_select_id=self.selected_node_id)
 
+        # 自动居中新创建的节点
+        if self.user_config.get("auto_center_canvas", True):
+            QTimer.singleShot(50, lambda: self.center_on_node(self.selected_node_id))
+
     def delete_selected_node(self):
         if not self.selected_node_id:
             QMessageBox.warning(self, "提示", "请先选中一个要删除的节点！")
@@ -360,6 +378,10 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         
         self.save_data()
         self.refresh_ui(force_select_id=next_select_id)
+
+        # 自动居中删除后新选中的节点
+        if self.user_config.get("auto_center_canvas", True) and next_select_id:
+            QTimer.singleShot(50, lambda: self.center_on_node(next_select_id))
 
     def edit_prerequisites(self):
         if not self.selected_node_id:
@@ -449,16 +471,19 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             min_x, max_x = min(xs), max(xs)
             min_y, max_y = min(ys), max(ys)
             
-            # 设定较大的边缘留白缓冲区，允许用户向外拖拽很远的距离
             margin = 4000 
-            self.scene.setSceneRect(
+            rect = QRectF(
                 min_x - margin,
                 min_y - margin,
                 (max_x - min_x) + 2 * margin + 180,
                 (max_y - min_y) + 2 * margin + 70
             )
+            self.scene.setSceneRect(rect)
+            self.view.setSceneRect(rect)  # 强制视图立即同步滚动边界，消除定位不反应的问题
         else:
-            self.scene.setSceneRect(-2000, -2000, 4000, 4000)
+            default_rect = QRectF(-2000, -2000, 4000, 4000)
+            self.scene.setSceneRect(default_rect)
+            self.view.setSceneRect(default_rect)
 
         for node_id, node in self.all_nodes.items():
             x, y = self.node_positions[node_id]
@@ -751,14 +776,13 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             elif dir_str == 'right': mapped_key = Qt.Key_Right
             target_id = self._get_logical_navigation_target(mapped_key)
 
+        # 新代码：使用延时安全居中
         if target_id:
             self.selected_node_id = target_id
             self.refresh_ui(force_select_id=target_id)
             
             if self.user_config.get("auto_center_canvas", True):
-                if target_id in self.node_positions:
-                    pos = self.node_positions[target_id]
-                    self.view.centerOn(pos[0] + 90, pos[1] + 35)
+                QTimer.singleShot(50, lambda: self.center_on_node(target_id))
 
     def _get_logical_navigation_target(self, key):
         if not self.selected_node_id or not self.root_node:
