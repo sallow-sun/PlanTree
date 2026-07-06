@@ -8,7 +8,7 @@ class BaseTheme:
     line_width = 2            
     font_family = "Microsoft YaHei" 
     button_texts = {}
-    desktop_texts = {} # 新增书架大厅多态文案字典
+    desktop_texts = {} 
     inspector_title = ""
     inspector_placeholder = ""
 
@@ -38,6 +38,7 @@ class ModernDarkTheme(BaseTheme):
 
     button_texts = {
         "back": "返回",
+        "help": "使用帮助",
         "export": "导出",
         "import": "导入",
         "add": "添加子节点",
@@ -45,6 +46,7 @@ class ModernDarkTheme(BaseTheme):
         "move_up": "向上/前移",
         "move_down": "向下/后移",
         "prereq": "设置前置",
+        "canvas_bg": "画布背景",  # 新增按钮样式名
         "settings": "设置"
     }
 
@@ -229,6 +231,7 @@ class ConstructivistTheme(BaseTheme):
 
     button_texts = {
         "back": "返回",
+        "help": "使用帮助",
         "export": "导出",
         "import": "导入",
         "add": "添加子节点",
@@ -236,6 +239,7 @@ class ConstructivistTheme(BaseTheme):
         "move_up": "向上/前移",
         "move_down": "向下/后移",
         "prereq": "设置前置",
+        "canvas_bg": "画布背景",
         "settings": "设置"
     }
 
@@ -455,6 +459,7 @@ class RococoTheme(BaseTheme):
 
     button_texts = {
         "back": "返回",
+        "help": "使用帮助",
         "export": "导出",
         "import": "导入",
         "add": "添加子节点",
@@ -462,6 +467,7 @@ class RococoTheme(BaseTheme):
         "move_up": "向上/前移",
         "move_down": "向下/后移",
         "prereq": "设置前置",
+        "canvas_bg": "画布背景",
         "settings": "设置"
     }
 
@@ -652,6 +658,7 @@ class TerminalTheme(BaseTheme):
 
     button_texts = {
         "back": "返回",
+        "help": "使用帮助",
         "export": "导出",
         "import": "导入",
         "add": "添加子节点",
@@ -659,6 +666,7 @@ class TerminalTheme(BaseTheme):
         "move_up": "向上/前移",
         "move_down": "向下/后移",
         "prereq": "设置前置",
+        "canvas_bg": "画布背景",
         "settings": "设置"
     }
 
@@ -875,6 +883,7 @@ class SwissMinimalistTheme(BaseTheme):
 
     button_texts = {
         "back": "返回",
+        "help": "使用帮助",
         "export": "导出",
         "import": "导入",
         "add": "添加子节点",
@@ -882,6 +891,7 @@ class SwissMinimalistTheme(BaseTheme):
         "move_up": "向上/前移",
         "move_down": "向下/后移",
         "prereq": "设置前置",
+        "canvas_bg": "画布背景",
         "settings": "设置"
     }
 

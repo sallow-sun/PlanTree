@@ -1,7 +1,8 @@
 # canvas_views.py
+import os  # 新增系统文件路径模块检测
 from PySide6.QtWidgets import QGraphicsView, QGraphicsItem
-from PySide6.QtGui import QColor, QBrush, QPen, QPainter, QFont
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtGui import QColor, QBrush, QPen, QPainter, QPainterPath, QFont, QPixmap
+from PySide6.QtCore import Qt, QRectF, QPointF
 
 class VisualNodeItem(QGraphicsItem):
     def __init__(self, node, is_locked, main_app):
@@ -20,16 +21,13 @@ class VisualNodeItem(QGraphicsItem):
         painter.setRenderHint(QPainter.Antialiasing)
         current_theme = self.main_app.get_current_theme_class()
         
-        # 动态计算未完成的前置依赖数量
         incomplete_count = 0
         if self.is_locked:
-            # 1. 计算显式配置的前置依赖中未完成的数量
             for prereq_id in self.node.prerequisites:
                 prereq_node = self.main_app.all_nodes.get(prereq_id)
                 if not prereq_node or prereq_node.progress < 100:
                     incomplete_count += 1
             
-            # 2. 如果是严格模式，且显式依赖已满足（但仍锁定），则说明受限于隐式父级节点约束
             if incomplete_count == 0 and getattr(self.node, "node_type", "standard") == "strict":
                 parent_node, _ = self.main_app._find_parent_and_siblings(self.main_app.root_node, self.node.node_id)
                 if parent_node and parent_node.node_id != self.main_app.root_node.node_id:
@@ -70,13 +68,22 @@ class InteractiveGraphicsView(QGraphicsView):
         if event.key() in [
             Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right,
             Qt.Key_W, Qt.Key_S, Qt.Key_A, Qt.Key_D,
-            Qt.Key_Return, Qt.Key_Enter, Qt.Key_Delete
+            Qt.Key_Return, Qt.Key_Enter, Qt.Key_Delete, Qt.Key_F2  # 委托支持 F2 键
         ]:
-            # 直接委托给主窗口的键盘处理事件，避免被 QGraphicsView 的滚动条吞噬
             self.main_app.keyPressEvent(event)
         else:
             super().keyPressEvent(event)
 
     def drawBackground(self, painter, rect):
         current_theme = self.main_app.get_current_theme_class()
+        
+        # 1. 优先绘制现有主题的默认画布色彩或网格
         current_theme.draw_background(painter, rect)
+        
+        # 2. 如果当前科目地图定制了专属背景底图，则在此进行贴图平铺渲染（支持无限滚动画布）
+        if self.main_app.root_node and getattr(self.main_app.root_node, "canvas_bg_image", ""):
+            bg_path = self.main_app.root_node.canvas_bg_image
+            if os.path.exists(bg_path):
+                pixmap = QPixmap(bg_path)
+                if not pixmap.isNull():
+                    painter.drawTiledPixmap(rect, pixmap, rect.topLeft())

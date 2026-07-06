@@ -1,7 +1,8 @@
 # dialogs.py
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit,
-    QDialogButtonBox, QColorDialog, QListWidget, QListWidgetItem, QCheckBox, QComboBox
+    QDialogButtonBox, QColorDialog, QListWidget, QListWidgetItem, QCheckBox, QComboBox,
+    QFrame
 )
 from PySide6.QtCore import Qt
 
@@ -208,3 +209,52 @@ class CheckInDialog(QDialog):
             "minutes": self.spin_minutes.value(),
             "note": self.edit_note.text().strip()
         }
+
+
+# dialogs.py 底部 HelpDialog 类的餐馆清单样式更新
+
+class HelpDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("快捷键帮助")
+        self.setFixedSize(380, 420)  # 固定大小确保清单排版不变形
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+
+        help_text = QTextEdit(self)
+        help_text.setReadOnly(True)
+        help_text.setFrameShape(QFrame.NoFrame)
+        
+        # 饭店菜单/极简对齐清单式布局
+        help_html = """
+        <div style="font-family: 'Microsoft YaHei', sans-serif; line-height: 24px;">
+            <p align="center" style="font-size: 14px; font-weight: bold; margin-bottom: 15px;">
+                快捷操作清单 / KEYBOARD SHORTCUTS
+            </p>
+            
+            <p style="font-weight: bold; margin-bottom: 5px;">一、 节点编辑</p>
+            <table width="100%" cellspacing="0" cellpadding="2">
+                <tr><td>F2 键</td><td>············································</td><td align="right">重命名节点</td></tr>
+                <tr><td>Enter 键</td><td>············································</td><td align="right">新增子节点</td></tr>
+                <tr><td>Delete 键</td><td>············································</td><td align="right">删除整条分支</td></tr>
+                <tr><td>M 键</td><td>············································</td><td align="right">切换模式</td></tr>
+            </table>
+            
+            <br/>
+            <p style="font-weight: bold; margin-bottom: 5px;">二、 视图控制</p>
+            <table width="100%" cellspacing="0" cellpadding="2">
+                <tr><td>方向键 / WASD</td><td>············································</td><td align="right">选择节点</td></tr>
+                <tr><td>Esc 键</td><td>············································</td><td align="right">释放文本焦点</td></tr>
+                <tr><td>鼠标滚轮</td><td>············································</td><td align="right">缩放画布</td></tr>
+                <tr><td>右键拖拽</td><td>············································</td><td align="right">平移视野</td></tr>
+            </table>
+        </div>
+        """
+        help_text.setHtml(help_html)
+        layout.addWidget(help_text)
+
+        btn_close = QPushButton("关闭", self)
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)

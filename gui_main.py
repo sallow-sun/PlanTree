@@ -2,16 +2,19 @@
 import sys
 import uuid
 import datetime
+import os
+import shutil
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QPushButton, QHBoxLayout, 
-    QVBoxLayout, QWidget, QGraphicsScene, QSplitter, QDialog, QStackedWidget
+    QVBoxLayout, QWidget, QGraphicsScene, QSplitter, QDialog, QStackedWidget,
+    QMenu, QFileDialog
 )
-from PySide6.QtGui import QColor, QPen, QPainterPath
+from PySide6.QtGui import QColor, QPen, QPainterPath, QAction, QCursor
 from PySide6.QtCore import Qt, QPointF
 
 # 引入子模块
 from models import StudyNode
-from dialogs import SettingsDialog, PrereqSelectDialog
+from dialogs import SettingsDialog, PrereqSelectDialog, HelpDialog  # 引入 HelpDialog
 from canvas_views import VisualNodeItem, InteractiveGraphicsView
 from data_manager import DataManagerMixin  
 from inspector_panel import InspectorPanel  
@@ -40,7 +43,7 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             "layout_direction": 0,
             "auto_center_canvas": True,
             "nav_mode": 0,
-            "new_node_color_policy": 0, # 新增 0: 默认颜色，1: 继承父节点颜色
+            "new_node_color_policy": 0, 
             "theme": 0 
         }
 
@@ -81,8 +84,15 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         self.btn_move_up = QPushButton()
         self.btn_move_down = QPushButton()
         self.btn_edit_prereq = QPushButton()
-        self.btn_settings = QPushButton()
         
+        self.btn_canvas_bg = QPushButton()
+        self.btn_canvas_bg.clicked.connect(self.set_custom_canvas_background)
+        
+        # 新增：使用帮助按钮
+        self.btn_help = QPushButton()
+        self.btn_help.clicked.connect(self.show_help_dialog)
+        
+        self.btn_settings = QPushButton()
         self.btn_delete_node.setObjectName("dangerButton")
         
         self.btn_export.clicked.connect(self.export_share_code)
@@ -102,7 +112,9 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         toolbar_layout.addWidget(self.btn_move_up)
         toolbar_layout.addWidget(self.btn_move_down)
         toolbar_layout.addWidget(self.btn_edit_prereq)
+        toolbar_layout.addWidget(self.btn_canvas_bg)  
         toolbar_layout.addStretch() 
+        toolbar_layout.addWidget(self.btn_help)      # 组装到设置按钮旁边
         toolbar_layout.addWidget(self.btn_settings)
         
         self.workspace_layout.addLayout(toolbar_layout)
@@ -205,6 +217,8 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         self.btn_move_up.setText(txt_map.get("move_up", "向上/前移"))
         self.btn_move_down.setText(txt_map.get("move_down", "向下/后移"))
         self.btn_edit_prereq.setText(txt_map.get("prereq", "前置依赖"))
+        self.btn_canvas_bg.setText(txt_map.get("canvas_bg", "画布背景")) 
+        self.btn_help.setText(txt_map.get("help", "使用帮助"))       # 应用多态文本
         self.btn_settings.setText(txt_map.get("settings", "偏好设置"))
 
     def apply_inspector_layout_config(self):
@@ -284,7 +298,6 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         parent_id = self.selected_node_id
         new_id = "node_" + uuid.uuid4().hex[:8]
         
-        # 处理颜色遗传策略 (需求 3)
         policy = self.user_config.get("new_node_color_policy", 0)
         node_color = parent_node.color if policy == 1 else "#2d3748"
 
@@ -487,6 +500,64 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
 
             self.draw_tree_connections_recursive(child)
 
+    def set_custom_canvas_background(self):
+        if not self.root_node:
+            return
+            
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background-color: #252526; color: #cccccc; border: 1px solid #454545; }
+            QMenu::item:selected { background-color: #094771; color: #ffffff; }
+        """)
+        
+        select_act = QAction("选择画布背景图", self)
+        select_act.triggered.connect(self.import_canvas_bg_image)
+        menu.addAction(select_act)
+        
+        if getattr(self.root_node, "canvas_bg_image", ""):
+            clear_act = QAction("恢复默认主题画布", self)
+            clear_act.triggered.connect(self.clear_canvas_bg_image)
+            menu.addAction(clear_act)
+            
+        menu.exec(QCursor.pos())
+
+    def import_canvas_bg_image(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择画布背景图片", "", "图片文件 (*.png *.jpg *.jpeg *.bmp)"
+        )
+        if file_path:
+            _, ext = os.path.splitext(file_path)
+            dest_filename = f"canvas_bg_{self.current_plan_id}{ext}"
+            dest_path = os.path.join(self.plans_dir, dest_filename)
+            try:
+                shutil.copy(file_path, dest_path)
+                relative_path = os.path.join(self.plans_dir, dest_filename)
+                
+                self.root_node.canvas_bg_image = relative_path
+                self.save_data()
+                self.view.viewport().update()  
+                QMessageBox.information(self, "成功", "专属画布背景应用成功！")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"应用画布背景失败: {e}")
+
+    def clear_canvas_bg_image(self):
+        img_path = getattr(self.root_node, "canvas_bg_image", "")
+        if img_path and os.path.exists(img_path):
+            try:
+                os.remove(img_path)
+            except Exception as e:
+                print(f"删除专属物理背景图异常: {e}")
+        self.root_node.canvas_bg_image = ""
+        self.save_data()
+        self.view.viewport().update()
+        QMessageBox.information(self, "成功", "已恢复默认主题画布背景！")
+
+    # 新增：打开帮助弹窗
+    def show_help_dialog(self):
+        dialog = HelpDialog(self)
+        dialog.setStyleSheet(self.get_current_theme_class().qss)
+        dialog.exec()
+
     def keyPressEvent(self, event):
         if self.inspector.inspect_name.hasFocus() or self.inspector.inspect_notes.hasFocus():
             super().keyPressEvent(event)
@@ -497,6 +568,14 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             return
 
         key = event.key()
+
+        # F2 快速编辑节点名称
+        if key == Qt.Key_F2:
+            if self.selected_node_id and self.inspector.isVisible() and self.inspector.inspect_form.isVisible():
+                self.inspector.inspect_name.setFocus()
+                self.inspector.inspect_name.selectAll()
+                event.accept()
+                return
 
         if key == Qt.Key_Delete:
             self.delete_selected_node()
