@@ -1,0 +1,22 @@
+# Python 编译缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# PyInstaller 打包产生的临时文件夹
+build/
+dist/
+*.spec
+
+# 个人本地的用户配置文件与测试计划数据（防止您的隐私和测试数据被公开）
+user_config.json
+library_manifest.json
+plans/
+my_learning_plan.json
+
+# 虚拟环境（如果本地创建了 venv）
+venv/
+.venv/
+.vscode/
+.idea/

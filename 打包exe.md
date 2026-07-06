@@ -1,0 +1,1 @@
+pyinstaller --noconsole --onefile --icon=app_icon.ico --name="KnowledgeTree" gui_main.py
