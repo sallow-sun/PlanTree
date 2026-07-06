@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, QPointF
 
 # 引入子模块
 from models import StudyNode
-from dialogs import SettingsDialog, PrereqSelectDialog, HelpDialog  # 引入 HelpDialog
+from dialogs import SettingsDialog, PrereqSelectDialog, HelpDialog  
 from canvas_views import VisualNodeItem, InteractiveGraphicsView
 from data_manager import DataManagerMixin  
 from inspector_panel import InspectorPanel  
@@ -88,7 +88,6 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         self.btn_canvas_bg = QPushButton()
         self.btn_canvas_bg.clicked.connect(self.set_custom_canvas_background)
         
-        # 新增：使用帮助按钮
         self.btn_help = QPushButton()
         self.btn_help.clicked.connect(self.show_help_dialog)
         
@@ -114,7 +113,7 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         toolbar_layout.addWidget(self.btn_edit_prereq)
         toolbar_layout.addWidget(self.btn_canvas_bg)  
         toolbar_layout.addStretch() 
-        toolbar_layout.addWidget(self.btn_help)      # 组装到设置按钮旁边
+        toolbar_layout.addWidget(self.btn_help)      
         toolbar_layout.addWidget(self.btn_settings)
         
         self.workspace_layout.addLayout(toolbar_layout)
@@ -218,7 +217,7 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         self.btn_move_down.setText(txt_map.get("move_down", "向下/后移"))
         self.btn_edit_prereq.setText(txt_map.get("prereq", "前置依赖"))
         self.btn_canvas_bg.setText(txt_map.get("canvas_bg", "画布背景")) 
-        self.btn_help.setText(txt_map.get("help", "使用帮助"))       # 应用多态文本
+        self.btn_help.setText(txt_map.get("help", "使用帮助"))       
         self.btn_settings.setText(txt_map.get("settings", "偏好设置"))
 
     def apply_inspector_layout_config(self):
@@ -443,6 +442,24 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         else:
             self.position_nodes_vertical_recursive(self.root_node, 50, -350)
 
+        # 【核心改动 1】：动态计算节点包围盒，并扩展 sceneRect 范围，提供近乎无限的拖拽边界
+        if self.node_positions:
+            xs = [pos[0] for pos in self.node_positions.values()]
+            ys = [pos[1] for pos in self.node_positions.values()]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            
+            # 设定较大的边缘留白缓冲区，允许用户向外拖拽很远的距离
+            margin = 4000 
+            self.scene.setSceneRect(
+                min_x - margin,
+                min_y - margin,
+                (max_x - min_x) + 2 * margin + 180,
+                (max_y - min_y) + 2 * margin + 70
+            )
+        else:
+            self.scene.setSceneRect(-2000, -2000, 4000, 4000)
+
         for node_id, node in self.all_nodes.items():
             x, y = self.node_positions[node_id]
             is_node_locked = self.is_locked(node)
@@ -454,7 +471,8 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             if node_id == self.selected_node_id:
                 item.setSelected(True)
 
-        self.draw_tree_connections_recursive(self.root_node)
+        # 【核心改动 2】：调用全新的一体化连线绘制方法，不仅绘制主干，还支持多前置（多物理父节点）虚线绘制
+        self.draw_all_connections()
         self.scene.blockSignals(False)
 
         if self.selected_node_id:
@@ -462,6 +480,61 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             self.inspector.update_data(current_node)
         else:
             self.inspector.update_data(None)
+
+    def draw_all_connections(self):
+        """一体化绘制连线：既包含树状主干，也包含通过前置依赖实现的多父级虚线连接"""
+        if not self.root_node:
+            return
+
+        # 1. 首先绘制经典的树状结构连线
+        self.draw_tree_connections_recursive(self.root_node)
+
+        # 2. 额外遍历所有节点的前置依赖，实现多对一连接
+        layout_dir = self.user_config.get("layout_direction", 0)
+        current_theme = self.get_current_theme_class()
+
+        for node_id, node in self.all_nodes.items():
+            if node_id == self.root_node.node_id:
+                continue
+
+            cx, cy = self.node_positions[node_id]
+            
+            # 获取该节点的直系物理父节点，避免重复绘制
+            parent_node, _ = self._find_parent_and_siblings(self.root_node, node_id)
+            parent_id = parent_node.node_id if parent_node else None
+
+            for prereq_id in node.prerequisites:
+                # 过滤掉直系物理父级（避免实线和虚线重合）
+                if prereq_id == parent_id:
+                    continue
+
+                if prereq_id in self.node_positions:
+                    px, py = self.node_positions[prereq_id]
+
+                    if layout_dir == 0:
+                        start_pt = QPointF(px + 180, py + 35)
+                        end_pt = QPointF(cx, cy + 35)
+                    else:
+                        start_pt = QPointF(px + 90, py + 70) 
+                        end_pt = QPointF(cx + 90, cy)        
+
+                    path = current_theme.draw_connection_path(start_pt, end_pt, layout_dir)
+                    is_child_locked = self.is_locked(child_node := node)
+
+                    # 绘制具有主题辨识度的虚线辅助线，表示多重依赖关联
+                    if isinstance(current_theme, themes.ConstructivistTheme) and not is_child_locked:
+                        pen_outer = QPen(QColor("#1a1a1a"), 3, Qt.DashLine) 
+                        pen_inner = QPen(QColor("#EADEC9"), 1.5, Qt.DashLine) 
+                        
+                        path_outer = self.scene.addPath(path, pen_outer)
+                        path_outer.setZValue(-2)
+                        path_inner = self.scene.addPath(path, pen_inner)
+                        path_inner.setZValue(-1)
+                    else:
+                        line_color = current_theme.get_line_color(is_child_locked)
+                        pen = QPen(line_color, current_theme.line_width, Qt.DashLine)
+                        path_item = self.scene.addPath(path, pen)
+                        path_item.setZValue(-1)
 
     def draw_tree_connections_recursive(self, node):
         layout_dir = self.user_config.get("layout_direction", 0)
@@ -552,7 +625,6 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         self.view.viewport().update()
         QMessageBox.information(self, "成功", "已恢复默认主题画布背景！")
 
-    # 新增：打开帮助弹窗
     def show_help_dialog(self):
         dialog = HelpDialog(self)
         dialog.setStyleSheet(self.get_current_theme_class().qss)
@@ -569,7 +641,6 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
 
         key = event.key()
 
-        # F2 快速编辑节点名称
         if key == Qt.Key_F2:
             if self.selected_node_id and self.inspector.isVisible() and self.inspector.inspect_form.isVisible():
                 self.inspector.inspect_name.setFocus()
