@@ -121,7 +121,7 @@ class DataManagerMixin:
                 print(f"保存路线失败: {e}")
 
     def update_manifest_stats_for_current(self):
-        """计算统计数据并更新书架，建立主题索引与代表色的映射回写"""
+        """计算统计数据并更新书架 (去除封面色彩同步回写，使其完全独立)"""
         if not self.current_plan_id:
             return
             
@@ -137,23 +137,14 @@ class DataManagerMixin:
 
         # 获取具体的路线工作区当前绑定的运行期主题
         theme_idx = getattr(self, "current_workspace_theme_idx", 0)
-        
-        # 将主题索引无缝折射映射到书架封面代表色上，使书架封面色与画布主题深度同步
-        color_map = {
-            0: "#2d3748",  # 现代钢青
-            1: "#962d22",  # 复古朱砂
-            2: "#FFD1DC",  # 蔷薇柔粉
-            3: "#020502",  # 荧光暗绿
-            4: "#002FA7"   # 克莱因蓝
-        }
-        new_color = color_map.get(theme_idx, "#2d3748")
 
         for plan in self.library_manifest.get("plans", []):
             if plan["id"] == self.current_plan_id:
                 plan["progress"] = progress_val
                 plan["total_hours"] = total_hours
                 plan["theme_index"] = theme_idx
-                plan["cover_color"] = new_color # 彻底更新卡片封面的显示色彩
+                # 注释/移除以下这行，使书架封面色不再被主题强制同步
+                # plan["cover_color"] = new_color 
                 break
         self.save_library_manifest()
 

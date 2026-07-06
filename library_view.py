@@ -497,22 +497,13 @@ class LibraryView(QWidget):
         self.grid_layout.addWidget(add_card, row, col)
 
     def request_change_cover_color(self, plan_id, current_color):
-        """需求 2：弹窗修改书本代表纯色"""
+        """弹窗修改书本代表纯色 (与内部路线图的根节点颜色完全解耦)"""
         color = QColorDialog.getColor(QColor(current_color), self, "选择封面背景色")
         if color.isValid():
             new_color = color.name()
             for plan in self.main_app.library_manifest.get("plans", []):
                 if plan["id"] == plan_id:
-                    plan["cover_color"] = new_color
-                    # 同步刷新对应的独立 JSON 文件底色属性
-                    try:
-                        with open(plan["file_path"], "r", encoding="utf-8") as f:
-                            node_data = json.load(f)
-                        node_data["color"] = new_color
-                        with open(plan["file_path"], "w", encoding="utf-8") as f:
-                            json.dump(node_data, f, indent=4, ensure_ascii=False)
-                    except Exception as e:
-                        print(f"写入文件背景色失败: {e}")
+                    plan["cover_color"] = new_color  # 仅修改书架大厅的封面色，不修改独立数据文件中的节点颜色
                     break
             self.main_app.save_library_manifest()
             self.refresh_shelf()
