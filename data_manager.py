@@ -16,7 +16,11 @@ class DataManagerMixin:
         self.manifest_path = "library_manifest.json"
         self.current_plan_id = None
         self.current_plan_path = ""
-        self.library_manifest = {"last_opened_id": "", "plans": []}
+        self.library_manifest = {"last_opened_id": "", "plans": [], "recycle_bin": []}
+        
+        # 撤销和重做历史记录栈
+        self.undo_stack = []
+        self.redo_stack = []
 
         # 创建存储文件夹
         if not os.path.exists(self.plans_dir):
@@ -58,12 +62,77 @@ class DataManagerMixin:
             except Exception as e:
                 print(f"自动迁移失败: {e}")
 
+    def push_undo_state(self):
+        """记录当前树状态快照到撤销栈，清除重做栈，以便后期重塑数据"""
+        if not self.root_node:
+            return
+        state = {
+            "tree": self.root_node.to_dict(),
+            "selected_node_id": self.selected_node_id
+        }
+        self.undo_stack.append(state)
+        # 限制历史深度防止占用过大内存
+        if len(self.undo_stack) > 30:
+            self.undo_stack.pop(0)
+        self.redo_stack.clear()
+        self.update_undo_redo_actions()
+
+    def undo(self):
+        """执行撤销恢复先前状态"""
+        if not self.undo_stack or not self.root_node:
+            return
+        current_state = {
+            "tree": self.root_node.to_dict(),
+            "selected_node_id": self.selected_node_id
+        }
+        self.redo_stack.append(current_state)
+
+        state = self.undo_stack.pop()
+        self.root_node = StudyNode.from_dict(state["tree"])
+        self.selected_node_id = state["selected_node_id"]
+
+        self._rebuild_node_dict()
+        self.save_data()
+        self.refresh_ui(force_select_id=self.selected_node_id)
+        self.update_undo_redo_actions()
+        if hasattr(self, "statusBar") and self.statusBar():
+            self.statusBar().showMessage("已撤销上一步操作", 1500)
+
+    def redo(self):
+        """执行重做恢复未来状态"""
+        if not self.redo_stack or not self.root_node:
+            return
+        current_state = {
+            "tree": self.root_node.to_dict(),
+            "selected_node_id": self.selected_node_id
+        }
+        self.undo_stack.append(current_state)
+
+        state = self.redo_stack.pop()
+        self.root_node = StudyNode.from_dict(state["tree"])
+        self.selected_node_id = state["selected_node_id"]
+
+        self._rebuild_node_dict()
+        self.save_data()
+        self.refresh_ui(force_select_id=self.selected_node_id)
+        self.update_undo_redo_actions()
+        if hasattr(self, "statusBar") and self.statusBar():
+            self.statusBar().showMessage("已重做上一步操作", 1500)
+
+    def update_undo_redo_actions(self):
+        """安全触发主窗体更新工具栏按钮状态"""
+        if hasattr(self, "update_undo_redo_buttons"):
+            self.update_undo_redo_buttons()
+
     def load_library_manifest(self):
         """加载书架索引文件"""
         if os.path.exists(self.manifest_path):
             try:
                 with open(self.manifest_path, "r", encoding="utf-8") as f:
                     self.library_manifest = json.load(f)
+                # 确保 recycle_bin 存在
+                if "recycle_bin" not in self.library_manifest:
+                    self.library_manifest["recycle_bin"] = []
             except Exception as e:
                 print(f"读取书架索引失败: {e}")
         else:
@@ -143,8 +212,6 @@ class DataManagerMixin:
                 plan["progress"] = progress_val
                 plan["total_hours"] = total_hours
                 plan["theme_index"] = theme_idx
-                # 注释/移除以下这行，使书架封面色不再被主题强制同步
-                # plan["cover_color"] = new_color 
                 break
         self.save_library_manifest()
 
@@ -233,6 +300,7 @@ class DataManagerMixin:
                     "color": node.color,
                     "node_type": getattr(node, "node_type", "standard"),
                     "study_logs": [],
+                    "layout_direction": getattr(node, "layout_direction", 0),  # 导出时脱敏并保存节点的方向属性
                     "children": [sanitize_node(child) for child in node.children]
                 }
 
@@ -283,6 +351,8 @@ class DataManagerMixin:
         )
         if ok and code.strip():
             try:
+                # 覆盖导入前备份现有状态以供撤销
+                self.push_undo_state()
                 compressed_data = base64.b64decode(code.strip().encode("utf-8"))
                 json_str = zlib.decompress(compressed_data).decode("utf-8")
                 imported_data = json.loads(json_str)

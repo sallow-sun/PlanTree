@@ -1,5 +1,5 @@
 # canvas_views.py
-import os  # 新增系统文件路径模块检测
+import os  
 from PySide6.QtWidgets import QGraphicsView, QGraphicsItem
 from PySide6.QtGui import QColor, QBrush, QPen, QPainter, QPainterPath, QFont, QPixmap
 from PySide6.QtCore import Qt, QRectF, QPointF
@@ -43,6 +43,10 @@ class VisualNodeItem(QGraphicsItem):
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event):
+        # 需求 1：若开启防护，拒绝进入改名输入焦点
+        if self.main_app.root_node and getattr(self.main_app.root_node, "is_protected", False):
+            event.accept()
+            return
         self.main_app.inspector.inspect_name.setFocus()
         self.main_app.inspector.inspect_name.selectAll()
 
@@ -68,7 +72,7 @@ class InteractiveGraphicsView(QGraphicsView):
         if event.key() in [
             Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right,
             Qt.Key_W, Qt.Key_S, Qt.Key_A, Qt.Key_D,
-            Qt.Key_Return, Qt.Key_Enter, Qt.Key_Delete, Qt.Key_F2  # 委托支持 F2 键
+            Qt.Key_Return, Qt.Key_Enter, Qt.Key_Delete, Qt.Key_F2  
         ]:
             self.main_app.keyPressEvent(event)
         else:
@@ -76,11 +80,8 @@ class InteractiveGraphicsView(QGraphicsView):
 
     def drawBackground(self, painter, rect):
         current_theme = self.main_app.get_current_theme_class()
-        
-        # 1. 优先绘制现有主题的默认画布色彩或网格
         current_theme.draw_background(painter, rect)
         
-        # 2. 如果当前科目地图定制了专属背景底图，则在此进行贴图平铺渲染（支持无限滚动画布）
         if self.main_app.root_node and getattr(self.main_app.root_node, "canvas_bg_image", ""):
             bg_path = self.main_app.root_node.canvas_bg_image
             if os.path.exists(bg_path):

@@ -2,9 +2,10 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit,
     QDialogButtonBox, QColorDialog, QListWidget, QListWidgetItem, QCheckBox, QComboBox,
-    QFrame
+    QFrame, QHBoxLayout, QWidget, QMessageBox
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize  # 引入 QSize 确保布局尺寸精准
+import os
 
 class SettingsDialog(QDialog):
     def __init__(self, config, parent=None):
@@ -258,3 +259,134 @@ class HelpDialog(QDialog):
         btn_close = QPushButton("关闭", self)
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close)
+
+
+class RecycleBinDialog(QDialog):
+    """回收站管理对话框，支持数据恢复与物理文件彻底删除"""
+    def __init__(self, manifest, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("回收站")
+        self.resize(540, 420)  # 提供合理的视口空间
+        self.manifest = manifest
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        self.lbl_info = QLabel("已删除的导图列表（可在下方直接还原或彻底销毁）：")
+        layout.addWidget(self.lbl_info)
+
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget)
+
+        # 1. 先初始化底部控件，确保 btn_empty 被正确创建
+        bottom_layout = QHBoxLayout()
+        self.btn_empty = QPushButton("清空回收站")
+        self.btn_empty.setObjectName("dangerButton")
+        self.btn_empty.clicked.connect(self.empty_bin)
+        bottom_layout.addWidget(self.btn_empty)
+
+        bottom_layout.addStretch()
+
+        self.btn_close = QPushButton("关闭")
+        self.btn_close.clicked.connect(self.accept)
+        bottom_layout.addWidget(self.btn_close)
+
+        layout.addLayout(bottom_layout)
+
+        # 2. 控件创建完毕后再进行列表加载与按钮状态更新
+        self.refresh_list()
+
+    def refresh_list(self):
+        self.list_widget.clear()
+        bin_list = self.manifest.get("recycle_bin", [])
+        
+        if not bin_list:
+            item = QListWidgetItem("回收站空空如也")
+            item.setFlags(Qt.NoItemFlags)
+            self.list_widget.addItem(item)
+            self.btn_empty.setEnabled(False)
+            return
+
+        self.btn_empty.setEnabled(True)
+        for plan in bin_list:
+            item = QListWidgetItem()
+            self.list_widget.addItem(item)
+
+            row_widget = QWidget()
+            row_widget.setFixedHeight(40)  # 使用固定行高保证内容区域不缩水
+
+            row_layout = QHBoxLayout(row_widget)
+            # 核心调整：通过顶部 1px、底部 5px 的非对称边距，把按钮和文字往上提拉 2 像素，抵消视觉偏差
+            row_layout.setContentsMargins(12, 0, 12, 7)  
+            row_layout.setSpacing(10)
+
+            deleted_time = plan.get("deleted_at", "未知时间")
+            info_text = f"【{plan['name']}】  (删除于: {deleted_time})"
+            lbl_name = QLabel(info_text)
+            lbl_name.setStyleSheet("background: transparent; border: none; padding: 0px; margin: 0px;")
+            
+            # 对文本进行显式垂直居中
+            row_layout.addWidget(lbl_name, alignment=Qt.AlignVCenter)
+            row_layout.addStretch()
+
+            btn_restore = QPushButton("还原")
+            btn_restore.setFixedSize(60, 24)
+            btn_restore.setStyleSheet("font-size: 11px; padding: 0px; margin: 0px;")
+            btn_restore.clicked.connect(lambda checked=False, p=plan: self.restore_plan(p))
+            # 对“还原”按钮进行显式垂直居中
+            row_layout.addWidget(btn_restore, alignment=Qt.AlignVCenter)
+
+            btn_pure_del = QPushButton("彻底删除")
+            btn_pure_del.setObjectName("dangerButton")
+            btn_pure_del.setFixedSize(80, 24)
+            btn_pure_del.setStyleSheet("font-size: 11px; padding: 0px; margin: 0px;")
+            btn_pure_del.clicked.connect(lambda checked=False, p=plan: self.purge_plan(p))
+            # 对“彻底删除”按钮进行显式垂直居中
+            row_layout.addWidget(btn_pure_del, alignment=Qt.AlignVCenter)
+
+            # 显式强制 QListWidgetItem 的尺寸，防止容器大小与实际渲染产生偏差
+            item.setSizeHint(QSize(100, 42))
+            self.list_widget.setItemWidget(item, row_widget)
+            
+    def restore_plan(self, plan):
+        if plan in self.manifest.get("recycle_bin", []):
+            self.manifest["recycle_bin"].remove(plan)
+            plan.pop("deleted_at", None)
+            self.manifest["plans"].append(plan)
+            self.refresh_list()
+
+    def purge_plan(self, plan):
+        reply = QMessageBox.question(
+            self, "确认彻底删除", f"此操作将永久抹除导图【{plan['name']}】，物理数据文件将被直接销毁。是否继续？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            if plan in self.manifest.get("recycle_bin", []):
+                self.manifest["recycle_bin"].remove(plan)
+                self._physical_delete(plan)
+                self.refresh_list()
+
+    def empty_bin(self):
+        reply = QMessageBox.question(
+            self, "确认清空回收站", "确定要永久清除回收站中的所有路线图吗？此物理删除操作不可撤销！",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            bin_list = list(self.manifest.get("recycle_bin", []))
+            for plan in bin_list:
+                self._physical_delete(plan)
+            self.manifest["recycle_bin"] = []
+            self.refresh_list()
+
+    def _physical_delete(self, plan):
+        """执行彻底的物理删除"""
+        try:
+            if os.path.exists(plan["file_path"]):
+                os.remove(plan["file_path"])
+            if "cover_image" in plan:
+                img_p = plan["cover_image"]
+                if os.path.exists(img_p):
+                    os.remove(img_p)
+        except Exception as e:
+            print(f"清空回收站物理文件异常: {e}")

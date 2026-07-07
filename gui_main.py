@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QMenu, QFileDialog
 )
 from PySide6.QtGui import QColor, QPen, QPainterPath, QAction, QCursor
-from PySide6.QtCore import Qt, QPointF, QTimer  # 引入 QTimer
+from PySide6.QtCore import Qt, QPointF, QTimer  
 from PySide6.QtCore import QRectF
 
 # 引入子模块
@@ -80,6 +80,14 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         
         self.btn_export = QPushButton()
         self.btn_import = QPushButton()
+        
+        # 撤销与重做按钮
+        self.btn_undo = QPushButton()
+        self.btn_redo = QPushButton()
+        self.btn_undo.clicked.connect(self.undo)
+        self.btn_redo.clicked.connect(self.redo)
+        
+        self.btn_protect_toggle = QPushButton()  # 一键防护（只读）开关
         self.btn_add_child = QPushButton()
         self.btn_delete_node = QPushButton()
         self.btn_move_up = QPushButton()
@@ -97,6 +105,7 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         
         self.btn_export.clicked.connect(self.export_share_code)
         self.btn_import.clicked.connect(self.import_share_code)
+        self.btn_protect_toggle.clicked.connect(self.toggle_workspace_protection)
         self.btn_add_child.clicked.connect(self.add_child_node_fast)
         self.btn_delete_node.clicked.connect(self.delete_selected_node)
         self.btn_move_up.clicked.connect(lambda: self.move_sibling_order(-1))
@@ -106,7 +115,10 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         
         toolbar_layout.addWidget(self.btn_export)
         toolbar_layout.addWidget(self.btn_import)
+        toolbar_layout.addWidget(self.btn_undo)
+        toolbar_layout.addWidget(self.btn_redo)
         toolbar_layout.addSpacing(15) 
+        toolbar_layout.addWidget(self.btn_protect_toggle)
         toolbar_layout.addWidget(self.btn_add_child)
         toolbar_layout.addWidget(self.btn_delete_node)
         toolbar_layout.addWidget(self.btn_move_up)
@@ -136,6 +148,13 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
 
         self.apply_inspector_layout_config()
         self.route_to_library()
+
+    @property
+    def current_layout_direction(self):
+        """动态获取当前使用的布局方向，实现各导图的完全解耦"""
+        if self.root_node:
+            return getattr(self.root_node, "layout_direction", 0)
+        return self.user_config.get("layout_direction", 0)
 
     # ---- 路由跳转控制 ----
 
@@ -171,21 +190,22 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
                 self.current_workspace_theme_idx = plan.get("theme_index", 0)
                 break
 
-        # 1. 切换页面状态和路由索引
+        # 进入画布时清空历史快照
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+
         self.current_page_idx = 1
         self.central_stack.setCurrentIndex(1)
         
-        # 2. 应用样式并刷新工作区 UI
         self.apply_theme_styles()
         self.refresh_ui()
+        self.update_undo_redo_buttons()
         
         self.setWindowTitle(f"当前学习路径规划中 - {self.root_node.name}")
         
-        # 3. 延时安全居中定位到根节点
         if self.root_node:
             QTimer.singleShot(50, lambda: self.center_on_node(self.root_node.node_id))
 
-        # 4. 更新最后活跃时间
         for plan in self.library_manifest.get("plans", []):
             if plan["id"] == self.current_plan_id:
                 plan["last_active"] = datetime.date.today().strftime("%Y-%m-%d")
@@ -198,7 +218,6 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             return
         if node_id in self.node_positions:
             pos = self.node_positions[node_id]
-            # 加上节点尺寸的一半 (180x70) 以定位到卡片中心
             self.view.centerOn(pos[0] + 90, pos[1] + 35)
 
     def get_current_theme_class(self):
@@ -225,6 +244,8 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         self.btn_back_library.setText(txt_map.get("back", "⬅ 返回"))  
         self.btn_export.setText(txt_map.get("export", "导出路线"))
         self.btn_import.setText(txt_map.get("import", "导入路线"))
+        self.btn_undo.setText(txt_map.get("undo", "撤销"))
+        self.btn_redo.setText(txt_map.get("redo", "恢复"))
         self.btn_add_child.setText(txt_map.get("add", "添加子节点"))
         self.btn_delete_node.setText(txt_map.get("delete", "删除节点"))
         self.btn_move_up.setText(txt_map.get("move_up", "向上/前移"))
@@ -233,6 +254,20 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         self.btn_canvas_bg.setText(txt_map.get("canvas_bg", "画布背景")) 
         self.btn_help.setText(txt_map.get("help", "使用帮助"))       
         self.btn_settings.setText(txt_map.get("settings", "偏好设置"))
+
+        # 动态刷新一键防护按钮文案和外观状态
+        if self.root_node and getattr(self.root_node, "is_protected", False):
+            self.btn_protect_toggle.setText("切换至普通模式")
+            self.btn_protect_toggle.setStyleSheet("background-color: #511c1c; color: #ff9999; border-color: #722727;")
+        else:
+            self.btn_protect_toggle.setText("切换至保护模式")
+            self.btn_protect_toggle.setStyleSheet("")
+
+    def update_undo_redo_buttons(self):
+        """根据快照栈数据量状态，激活或禁用工具栏按钮"""
+        if hasattr(self, "btn_undo") and hasattr(self, "btn_redo"):
+            self.btn_undo.setEnabled(bool(self.undo_stack))
+            self.btn_redo.setEnabled(bool(self.redo_stack))
 
     def apply_inspector_layout_config(self):
         position = self.user_config.get("inspector_position", 0)
@@ -259,8 +294,11 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         
         if self.current_plan_id:
             temp_config["theme"] = self.current_workspace_theme_idx
+            if self.root_node:
+                temp_config["layout_direction"] = getattr(self.root_node, "layout_direction", 0)
         else:
             temp_config["theme"] = self.user_config.get("theme", 0)
+            temp_config["layout_direction"] = self.user_config.get("layout_direction", 0)
 
         dialog = SettingsDialog(temp_config, self)
         dialog.setStyleSheet(self.get_current_theme_class().qss) 
@@ -269,8 +307,10 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             
             if self.current_plan_id:
                 self.current_workspace_theme_idx = new_config.get("theme", 0)
+                if self.root_node:
+                    self.root_node.layout_direction = new_config.get("layout_direction", 0)
                 for k in self.user_config:
-                    if k != "theme":
+                    if k not in ["theme", "layout_direction"]:
                         self.user_config[k] = new_config[k]
                 self.save_user_config()
                 self.save_data()
@@ -301,12 +341,38 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             self.selected_node_id = None
             self.inspector.update_data(None)
 
+    def check_protection_and_warn(self):
+        """防护状态验证辅助函数：开启防护时拒绝操作并弹出提示"""
+        if self.root_node and getattr(self.root_node, "is_protected", False):
+            QMessageBox.warning(self, "一键防护中", "当前导图已开启一键防护（只读），禁止增加、删除或修改节点属性！")
+            return True
+        return False
+
+    def toggle_workspace_protection(self):
+        """开启或解除导图内部一键防护"""
+        if not self.root_node:
+            return
+        self.root_node.is_protected = not getattr(self.root_node, "is_protected", False)
+        self.save_data()
+        self.apply_theme_styles()
+        self.refresh_ui(force_select_id=self.selected_node_id)
+        
+        status = "已开启更改防护" if self.root_node.is_protected else "已解除防护"
+        self.statusBar().showMessage(f"系统提示：当前导图{status}", 2500)
+
     def add_child_node_fast(self):
+        # 验证防护状态
+        if self.check_protection_and_warn():
+            return
+            
         if not self.selected_node_id:
             QMessageBox.warning(self, "提示", "请先在画布上点击选中一个卡片作为父节点！")
             return
         parent_node = self.all_nodes.get(self.selected_node_id)
         if not parent_node: return
+
+        # 变更前推入撤销栈
+        self.push_undo_state()
 
         parent_id = self.selected_node_id
         new_id = "node_" + uuid.uuid4().hex[:8]
@@ -328,11 +394,14 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             
         self.refresh_ui(force_select_id=self.selected_node_id)
 
-        # 自动居中新创建的节点
         if self.user_config.get("auto_center_canvas", True):
             QTimer.singleShot(50, lambda: self.center_on_node(self.selected_node_id))
 
     def delete_selected_node(self):
+        # 验证防护状态
+        if self.check_protection_and_warn():
+            return
+
         if not self.selected_node_id:
             QMessageBox.warning(self, "提示", "请先选中一个要删除的节点！")
             return
@@ -350,6 +419,9 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             )
             if reply != QMessageBox.Yes:
                 return
+
+        # 变更前推入撤销栈
+        self.push_undo_state()
 
         parent_node, siblings = self._find_parent_and_siblings(self.root_node, self.selected_node_id)
         
@@ -379,11 +451,14 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         self.save_data()
         self.refresh_ui(force_select_id=next_select_id)
 
-        # 自动居中删除后新选中的节点
         if self.user_config.get("auto_center_canvas", True) and next_select_id:
             QTimer.singleShot(50, lambda: self.center_on_node(next_select_id))
 
     def edit_prerequisites(self):
+        # 验证防护状态
+        if self.check_protection_and_warn():
+            return
+
         if not self.selected_node_id:
             QMessageBox.warning(self, "提示", "请先选择一个节点！")
             return
@@ -396,6 +471,8 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         dialog = PrereqSelectDialog(node, self.all_nodes, self)
         dialog.setStyleSheet(self.get_current_theme_class().qss) 
         if dialog.exec() == QDialog.Accepted:
+            # 变更前推入撤销栈
+            self.push_undo_state()
             selected_ids = dialog.get_selected_prereqs()
             node.prerequisites = selected_ids
             self.save_data()
@@ -458,13 +535,12 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             self.scene.blockSignals(False)
             return
 
-        layout_dir = self.user_config.get("layout_direction", 0)
+        layout_dir = self.current_layout_direction
         if layout_dir == 0:
             self.position_nodes_recursive(self.root_node, 50, -200)
         else:
             self.position_nodes_vertical_recursive(self.root_node, 50, -350)
 
-        # 【核心改动 1】：动态计算节点包围盒，并扩展 sceneRect 范围，提供近乎无限的拖拽边界
         if self.node_positions:
             xs = [pos[0] for pos in self.node_positions.values()]
             ys = [pos[1] for pos in self.node_positions.values()]
@@ -479,7 +555,7 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
                 (max_y - min_y) + 2 * margin + 70
             )
             self.scene.setSceneRect(rect)
-            self.view.setSceneRect(rect)  # 强制视图立即同步滚动边界，消除定位不反应的问题
+            self.view.setSceneRect(rect)  
         else:
             default_rect = QRectF(-2000, -2000, 4000, 4000)
             self.scene.setSceneRect(default_rect)
@@ -496,7 +572,6 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             if node_id == self.selected_node_id:
                 item.setSelected(True)
 
-        # 【核心改动 2】：调用全新的一体化连线绘制方法，不仅绘制主干，还支持多前置（多物理父节点）虚线绘制
         self.draw_all_connections()
         self.scene.blockSignals(False)
 
@@ -506,16 +581,17 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         else:
             self.inspector.update_data(None)
 
+        # 刷新撤销、重做工具栏按钮可用性
+        self.update_undo_redo_buttons()
+
     def draw_all_connections(self):
-        """一体化绘制连线：既包含树状主干，也包含通过前置依赖实现的多父级虚线连接"""
+        """一体化绘制连线：包含树状主干与前置依赖的多父级连接"""
         if not self.root_node:
             return
 
-        # 1. 首先绘制经典的树状结构连线
         self.draw_tree_connections_recursive(self.root_node)
 
-        # 2. 额外遍历所有节点的前置依赖，实现多对一连接
-        layout_dir = self.user_config.get("layout_direction", 0)
+        layout_dir = self.current_layout_direction
         current_theme = self.get_current_theme_class()
 
         for node_id, node in self.all_nodes.items():
@@ -523,13 +599,10 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
                 continue
 
             cx, cy = self.node_positions[node_id]
-            
-            # 获取该节点的直系物理父节点，避免重复绘制
             parent_node, _ = self._find_parent_and_siblings(self.root_node, node_id)
             parent_id = parent_node.node_id if parent_node else None
 
             for prereq_id in node.prerequisites:
-                # 过滤掉直系物理父级（避免实线和虚线重合）
                 if prereq_id == parent_id:
                     continue
 
@@ -546,7 +619,6 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
                     path = current_theme.draw_connection_path(start_pt, end_pt, layout_dir)
                     is_child_locked = self.is_locked(child_node := node)
 
-                    # 绘制具有主题辨识度的虚线辅助线，表示多重依赖关联
                     if isinstance(current_theme, themes.ConstructivistTheme) and not is_child_locked:
                         pen_outer = QPen(QColor("#1a1a1a"), 3, Qt.DashLine) 
                         pen_inner = QPen(QColor("#EADEC9"), 1.5, Qt.DashLine) 
@@ -562,7 +634,7 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
                         path_item.setZValue(-1)
 
     def draw_tree_connections_recursive(self, node):
-        layout_dir = self.user_config.get("layout_direction", 0)
+        layout_dir = self.current_layout_direction
         parent_id = node.node_id
         px, py = self.node_positions[parent_id]
 
@@ -660,19 +732,35 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             super().keyPressEvent(event)
             return
 
+        key = event.key()
+
+        # 支持 Ctrl+Z 和 Ctrl+Y 键盘热键撤销/重做
+        if event.modifiers() & Qt.ControlModifier:
+            if key == Qt.Key_Z:
+                self.undo()
+                event.accept()
+                return
+            elif key == Qt.Key_Y:
+                self.redo()
+                event.accept()
+                return
+
         if not self.selected_node_id:
             super().keyPressEvent(event)
             return
 
-        key = event.key()
-
+        # F2 改名
         if key == Qt.Key_F2:
+            if self.check_protection_and_warn():
+                event.accept()
+                return
             if self.selected_node_id and self.inspector.isVisible() and self.inspector.inspect_form.isVisible():
                 self.inspector.inspect_name.setFocus()
                 self.inspector.inspect_name.selectAll()
                 event.accept()
                 return
 
+        # 键盘热键执行修改
         if key == Qt.Key_Delete:
             self.delete_selected_node()
         elif key in [Qt.Key_Return, Qt.Key_Enter]:
@@ -686,6 +774,10 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             self.handle_navigation(key)
     
     def toggle_selected_node_mode(self):
+        # 验证防护状态
+        if self.check_protection_and_warn():
+            return
+
         if not self.selected_node_id:
             return
         node = self.all_nodes.get(self.selected_node_id)
@@ -695,6 +787,9 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         if node.node_id == self.root_node.node_id:
             self.statusBar().showMessage("系统提示：根节点不允许变更为严格约束模式", 2000)
             return
+
+        # 变更前推入撤销栈
+        self.push_undo_state()
 
         current_type = getattr(node, "node_type", "standard")
         new_type = "strict" if current_type == "standard" else "standard"
@@ -776,7 +871,6 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
             elif dir_str == 'right': mapped_key = Qt.Key_Right
             target_id = self._get_logical_navigation_target(mapped_key)
 
-        # 新代码：使用延时安全居中
         if target_id:
             self.selected_node_id = target_id
             self.refresh_ui(force_select_id=target_id)
@@ -792,7 +886,7 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         if not current_node:
             return None
 
-        layout_dir = self.user_config.get("layout_direction", 0)
+        layout_dir = self.current_layout_direction
         parent_node, siblings = self._find_parent_and_siblings(self.root_node, self.selected_node_id)
 
         if current_node.node_id == self.root_node.node_id:
@@ -836,6 +930,10 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
         return None
     
     def move_sibling_order(self, direction):
+        # 验证防护状态
+        if self.check_protection_and_warn():
+            return
+
         if not self.selected_node_id:
             QMessageBox.warning(self, "提示", "请先选中一个要调整顺序的节点！")
             return
@@ -857,6 +955,8 @@ class KnowledgeTreeApp(QMainWindow, DataManagerMixin):
 
         new_idx = idx + direction
         if 0 <= new_idx < len(siblings):
+            # 变更前推入撤销栈
+            self.push_undo_state()
             siblings[idx], siblings[new_idx] = siblings[new_idx], siblings[idx]
             self.save_data()
             self.refresh_ui(force_select_id=self.selected_node_id)

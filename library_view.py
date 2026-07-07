@@ -12,12 +12,14 @@ from PySide6.QtGui import QColor, QFont, QCursor, QAction
 from PySide6.QtCore import Qt, QSize, Signal
 
 class PlanCardWidget(QFrame):
-    """书页立体风格卡片部件 (支持本地封面背景图)"""
+    """书页立体风格卡片部件 (支持本地封面背景图与隐式只读防护)"""
     clicked = Signal(str, str)
     delete_requested = Signal(str)
+    rename_requested = Signal(str, str)  
     change_cover_color_requested = Signal(str, str)
     change_cover_image_requested = Signal(str)
     clear_cover_image_requested = Signal(str)
+    toggle_protection_requested = Signal(str)  # 切换防护信号
 
     def __init__(self, plan_data, is_theme_dark, parent=None):
         super().__init__(parent)
@@ -25,10 +27,11 @@ class PlanCardWidget(QFrame):
         self.file_path = plan_data["file_path"]
         self.plan_name = plan_data["name"]
         self.cover_color = plan_data.get("cover_color", "#2d3748")
-        self.cover_image = plan_data.get("cover_image", "") # 新增图片存储路径
+        self.cover_image = plan_data.get("cover_image", "") 
         self.progress = plan_data.get("progress", 0)
         self.total_hours = plan_data.get("total_hours", 0.0)
         self.last_active = plan_data.get("last_active", "2023-10-01")
+        self.is_protected_plan = plan_data.get("is_protected", False)  # 仅在后台维护防护状态，不在卡片表面展示
         self.is_theme_dark = is_theme_dark
 
         self.setFixedSize(190, 260)
@@ -72,12 +75,13 @@ class PlanCardWidget(QFrame):
         cover_layout = QVBoxLayout(self.cover_widget)
         cover_layout.setContentsMargins(15, 15, 15, 15)
         
+        # 书名区 (保持绝对的极简纯净外观，无额外标签干扰)
         self.lbl_cover_title = QLabel(self.plan_name, self.cover_widget)
         self.lbl_cover_title.setObjectName("coverTitle")
         self.lbl_cover_title.setWordWrap(True)
         self.lbl_cover_title.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         
-        # 若带有背景图片，添加柔和半透明黑色文字底阴影，避免在浅色图上看不清
+        # 若带有背景图片，添加柔和半透明黑色文字底阴影
         if self.cover_image and os.path.exists(self.cover_image):
             text_shadow_css = "background-color: rgba(0,0,0,0.35); border-radius: 4px; padding: 2px;"
         else:
@@ -96,6 +100,7 @@ class PlanCardWidget(QFrame):
         """)
         cover_layout.addWidget(self.lbl_cover_title)
         
+        # 底部栏布局
         badge_layout = QHBoxLayout()
         self.lbl_badge = QLabel("进度")
         self.lbl_badge.setObjectName("badgeStamp")
@@ -234,13 +239,52 @@ class PlanCardWidget(QFrame):
         super().mousePressEvent(event)
 
     def show_context_menu(self):
+        """弹出排版美化后的上下文菜单 (只读模式完全隐式化)"""
         menu = QMenu(self)
+        
+        # 现代扁平化菜单设计
         menu.setStyleSheet("""
-            QMenu { background-color: #252526; color: #cccccc; border: 1px solid #454545; }
-            QMenu::item:selected { background-color: #094771; color: #ffffff; }
+            QMenu { 
+                background-color: #1e1e1e; 
+                color: #d4d4d4; 
+                border: 1px solid #3c3c3c; 
+                border-radius: 6px; 
+                padding: 6px 0px;
+            }
+            QMenu::item { 
+                padding: 6px 26px 6px 22px; 
+                margin: 2px 5px;
+                border-radius: 4px;
+                font-family: "Microsoft YaHei", sans-serif;
+                font-size: 12px;
+            }
+            QMenu::item:selected { 
+                background-color: #007acc; 
+                color: #ffffff; 
+            }
+            QMenu::item:disabled {
+                color: #5a5a5a;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #2e2e2e;
+                margin: 6px 10px;
+            }
         """)
 
-        # 新增封面外观修改选项
+        # 保护切换项
+        protect_label = "切换至普通模式" if self.is_protected_plan else "切换至保护模式"
+        protect_act = QAction(protect_label, self)
+        protect_act.triggered.connect(lambda: self.toggle_protection_requested.emit(self.plan_id))
+        menu.addAction(protect_act)
+
+        menu.addSeparator()
+
+        # 卡片常规修改功能
+        rename_act = QAction("重命名路线", self)
+        rename_act.triggered.connect(lambda: self.rename_requested.emit(self.plan_id, self.plan_name))
+        menu.addAction(rename_act)
+
         color_act = QAction("修改封面颜色", self)
         color_act.triggered.connect(lambda: self.change_cover_color_requested.emit(self.plan_id, self.cover_color))
         menu.addAction(color_act)
@@ -249,8 +293,9 @@ class PlanCardWidget(QFrame):
         image_act.triggered.connect(lambda: self.change_cover_image_requested.emit(self.plan_id))
         menu.addAction(image_act)
 
+        clear_image_act = None
         if self.cover_image:
-            clear_image_act = QAction("清除图片并恢复色彩", self)
+            clear_image_act = QAction("清除封面图片", self)
             clear_image_act.triggered.connect(lambda: self.clear_cover_image_requested.emit(self.plan_id))
             menu.addAction(clear_image_act)
 
@@ -259,11 +304,21 @@ class PlanCardWidget(QFrame):
         del_action = QAction("删除此路线", self)
         del_action.triggered.connect(lambda: self.delete_requested.emit(self.plan_id))
         menu.addAction(del_action)
+
+        # 处于保护状态下时，只读屏蔽相关的修改操作
+        if self.is_protected_plan:
+            rename_act.setEnabled(False)
+            color_act.setEnabled(False)
+            image_act.setEnabled(False)
+            if clear_image_act:
+                clear_image_act.setEnabled(False)
+            del_action.setEnabled(False)
+
         menu.exec(QCursor.pos())
 
 
 class AddCardWidget(QFrame):
-    """新建计划占位虚线卡片 (杜绝 QSS 侵入)"""
+    """新建计划占位虚线卡片"""
     clicked = Signal()
 
     def __init__(self, is_theme_dark, parent=None):
@@ -310,7 +365,7 @@ class AddCardWidget(QFrame):
 
 
 class LibraryView(QWidget):
-    """主书架视图大厅 (Apple Books 风格)"""
+    """主书架视图大厅"""
     plan_selected = Signal(str, str)
 
     def __init__(self, main_app, parent=None):
@@ -341,6 +396,8 @@ class LibraryView(QWidget):
         header_layout.addLayout(title_container)
         header_layout.addStretch()
 
+        self.btn_recycle_bin = QPushButton("回收站", self)
+        self.btn_recycle_bin.setObjectName("btnRecycleBin")
         self.btn_new_plan = QPushButton("新建", self)
         self.btn_import_code = QPushButton("导入", self)
         self.btn_lib_settings = QPushButton("设置", self)
@@ -349,10 +406,12 @@ class LibraryView(QWidget):
         self.btn_import_code.setObjectName("btnImport")
         self.btn_lib_settings.setObjectName("btnSettings")
 
+        self.btn_recycle_bin.clicked.connect(self.show_recycle_bin_dialog)
         self.btn_new_plan.clicked.connect(self.show_new_plan_dialog)
         self.btn_import_code.clicked.connect(self.show_import_code_dialog)
         self.btn_lib_settings.clicked.connect(self.main_app.open_settings_dialog)
 
+        header_layout.addWidget(self.btn_recycle_bin)
         header_layout.addWidget(self.btn_import_code)
         header_layout.addWidget(self.btn_lib_settings)
         header_layout.addWidget(self.btn_new_plan)
@@ -400,6 +459,7 @@ class LibraryView(QWidget):
         self.btn_new_plan.setText(texts.get("new_btn", "✚ 新建"))
         self.btn_import_code.setText(texts.get("import_btn", "导入"))
         self.btn_lib_settings.setText(texts.get("settings_btn", "设置"))
+        self.btn_recycle_bin.setText("回收站")
 
         bg_hex = current_theme.canvas_bg
         self.is_dark_bg = True
@@ -462,6 +522,14 @@ class LibraryView(QWidget):
             }}
             QPushButton#btnSettings:hover {{ background-color: {"#454545" if self.is_dark_bg else "#e0e0e0"}; }}
         """)
+        self.btn_recycle_bin.setStyleSheet(f"""
+            QPushButton#btnRecycleBin {{
+                background-color: {other_bg}; color: {other_text}; border: 1px solid {other_border};
+                border-radius: {btn_radius}; padding: 8px 16px; font-weight: bold; font-size: 12px;
+                font-family: '{current_theme.font_family}';
+            }}
+            QPushButton#btnRecycleBin:hover {{ background-color: {"#454545" if self.is_dark_bg else "#e0e0e0"}; }}
+        """)
 
     def refresh_shelf(self):
         """重新扫描并重新编排书架网格"""
@@ -481,10 +549,12 @@ class LibraryView(QWidget):
             card.clicked.connect(self.plan_selected.emit)
             card.delete_requested.connect(self.request_delete_plan)
             
-            # 绑定新信号槽
+            # 绑定重命名及其他信号槽
+            card.rename_requested.connect(self.request_rename_plan)
             card.change_cover_color_requested.connect(self.request_change_cover_color)
             card.change_cover_image_requested.connect(self.request_change_cover_image)
             card.clear_cover_image_requested.connect(self.request_clear_cover_image)
+            card.toggle_protection_requested.connect(self.request_toggle_plan_protection)
 
             self.grid_layout.addWidget(card, row, col)
             col += 1
@@ -496,25 +566,63 @@ class LibraryView(QWidget):
         add_card.clicked.connect(self.show_new_plan_dialog)
         self.grid_layout.addWidget(add_card, row, col)
 
+    def request_toggle_plan_protection(self, plan_id):
+        """切换特定路线的隐式只读防护状态"""
+        for plan in self.main_app.library_manifest.get("plans", []):
+            if plan["id"] == plan_id:
+                plan["is_protected"] = not plan.get("is_protected", False)
+                break
+        self.main_app.save_library_manifest()
+        self.refresh_shelf()
+
+    def request_rename_plan(self, plan_id, current_name):
+        """弹窗修改路线名称"""
+        new_name, ok = QInputDialog.getText(
+            self, "重命名路线", "请输入新的路线名称：", QLineEdit.Normal, current_name
+        )
+        if ok and new_name.strip():
+            new_name = new_name.strip()
+            target_plan = None
+            
+            for plan in self.main_app.library_manifest.get("plans", []):
+                if plan["id"] == plan_id:
+                    plan["name"] = new_name
+                    target_plan = plan
+                    break
+            
+            if target_plan:
+                file_path = target_plan["file_path"]
+                if os.path.exists(file_path):
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        data["name"] = new_name
+                        with open(file_path, "w", encoding="utf-8") as f:
+                            json.dump(data, f, indent=4, ensure_ascii=False)
+                    except Exception as e:
+                        print(f"修改物理文件名称失败: {e}")
+
+            self.main_app.save_library_manifest()
+            self.refresh_shelf()
+
     def request_change_cover_color(self, plan_id, current_color):
-        """弹窗修改书本代表纯色 (与内部路线图的根节点颜色完全解耦)"""
+        """修改卡片纯色封面背景"""
         color = QColorDialog.getColor(QColor(current_color), self, "选择封面背景色")
         if color.isValid():
             new_color = color.name()
             for plan in self.main_app.library_manifest.get("plans", []):
                 if plan["id"] == plan_id:
-                    plan["cover_color"] = new_color  # 仅修改书架大厅的封面色，不修改独立数据文件中的节点颜色
+                    plan["cover_color"] = new_color  
                     break
             self.main_app.save_library_manifest()
             self.refresh_shelf()
 
     def request_change_cover_image(self, plan_id):
-        """需求 2：弹窗选择本地图片并上传作为封面背景"""
+        """上传本地封面图片"""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "选择封面图片", "", "图片文件 (*.png *.jpg *.jpeg *.bmp)"
         )
         if file_path:
-            # 自动拷贝到 plans 目录下防止原物理路径丢失
             _, ext = os.path.splitext(file_path)
             dest_filename = f"cover_{plan_id}{ext}"
             dest_path = os.path.join(self.main_app.plans_dir, dest_filename)
@@ -522,7 +630,6 @@ class LibraryView(QWidget):
                 shutil.copy(file_path, dest_path)
                 relative_path = os.path.join(self.main_app.plans_dir, dest_filename)
                 
-                # 回写索引
                 for plan in self.main_app.library_manifest.get("plans", []):
                     if plan["id"] == plan_id:
                         plan["cover_image"] = relative_path
@@ -533,7 +640,7 @@ class LibraryView(QWidget):
                 QMessageBox.critical(self, "错误", f"拷贝保存封面图失败: {e}")
 
     def request_clear_cover_image(self, plan_id):
-        """需求 2：清除封面图背景，退回到纯色状态"""
+        """清除封面背景底图并恢复纯色"""
         for plan in self.main_app.library_manifest.get("plans", []):
             if plan["id"] == plan_id:
                 if "cover_image" in plan:
@@ -549,7 +656,7 @@ class LibraryView(QWidget):
         self.refresh_shelf()
 
     def show_new_plan_dialog(self):
-        """弹出新建路线定制对话框"""
+        """新建学习路线对话框"""
         dialog = QDialog(self)
         dialog.setWindowTitle("新建")
         dialog.setMinimumWidth(320)
@@ -619,7 +726,9 @@ class LibraryView(QWidget):
                 "color": color_hex,
                 "node_type": "standard",
                 "study_logs": [],
-                "children": []
+                "children": [],
+                "is_protected": False,
+                "layout_direction": 0  # 显式初始化默认的展示方向
             }
             
             try:
@@ -634,7 +743,8 @@ class LibraryView(QWidget):
                     "theme_index": theme_idx,
                     "progress": 0,
                     "total_hours": 0.0,
-                    "last_active": datetime.date.today().strftime("%Y-%m-%d")
+                    "last_active": datetime.date.today().strftime("%Y-%m-%d"),
+                    "is_protected": False
                 }
                 self.main_app.library_manifest["plans"].append(new_plan)
                 self.main_app.save_library_manifest()
@@ -643,7 +753,7 @@ class LibraryView(QWidget):
                 QMessageBox.critical(self, "错误", f"无法生成初始计划：{e}")
 
     def show_import_code_dialog(self):
-        """导入外部路线分享码，解析为新书架卡片"""
+        """导入分享码"""
         code, ok = QInputDialog.getMultiLineText(self, "导入", "请在下方粘贴路线分享码：")
         if ok and code.strip():
             name, ok_name = QInputDialog.getText(self, "命名", "请为此导入的学习路径进行命名：")
@@ -659,7 +769,8 @@ class LibraryView(QWidget):
                         "theme_index": 0,
                         "progress": 0,
                         "total_hours": 0.0,
-                        "last_active": datetime.date.today().strftime("%Y-%m-%d")
+                        "last_active": datetime.date.today().strftime("%Y-%m-%d"),
+                        "is_protected": False
                     }
                     self.main_app.library_manifest["plans"].append(new_plan)
                     self.main_app.save_library_manifest()
@@ -669,7 +780,7 @@ class LibraryView(QWidget):
                     QMessageBox.critical(self, "导入失败", f"该分享码无效！\n信息：{e}")
 
     def request_delete_plan(self, plan_id):
-        """将选定路线彻底从硬盘及书架中擦除"""
+        """安全地将导图移动至回收站而不再直接执行物理删除"""
         target_plan = None
         for plan in self.main_app.library_manifest.get("plans", []):
             if plan["id"] == plan_id:
@@ -680,22 +791,27 @@ class LibraryView(QWidget):
             return
 
         reply = QMessageBox.question(
-            self, "二次确认",
-            f"确定要删除【{target_plan['name']}】吗？\n该操作不可逆！",
+            self, "确认删除",
+            f"确定要删除路线【{target_plan['name']}】吗？\n删除后将被移至回收站，可随时还原。",
             QMessageBox.Yes | QMessageBox.No
         )
         if reply == QMessageBox.Yes:
-            try:
-                if os.path.exists(target_plan["file_path"]):
-                    os.remove(target_plan["file_path"])
-                # 连带清除封面背景图片占用
-                if "cover_image" in target_plan:
-                    img_p = target_plan["cover_image"]
-                    if os.path.exists(img_p):
-                        os.remove(img_p)
-            except Exception as e:
-                print(f"物理删除文件异常: {e}")
-
             self.main_app.library_manifest["plans"].remove(target_plan)
+            
+            # 添加删除时间标签
+            target_plan["deleted_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.main_app.library_manifest.setdefault("recycle_bin", []).append(target_plan)
+            
             self.main_app.save_library_manifest()
             self.refresh_shelf()
+            QMessageBox.information(self, "已移至回收站", f"已成功将【{target_plan['name']}】移至回收站。")
+
+    def show_recycle_bin_dialog(self):
+        """展示回收站对话框并重刷书架"""
+        from dialogs import RecycleBinDialog
+        dialog = RecycleBinDialog(self.main_app.library_manifest, self)
+        dialog.setStyleSheet(self.main_app.get_current_theme_class().qss)
+        dialog.exec()
+        
+        self.main_app.save_library_manifest()
+        self.refresh_shelf()

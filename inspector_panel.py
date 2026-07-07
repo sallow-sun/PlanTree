@@ -38,7 +38,7 @@ class InspectorTextEdit(QTextEdit):
 
 
 class InspectorPanel(QWidget):
-    """详情面板类，独立接管所有右侧/底部的滑轨进度、调色、打卡删改、管理模式、文本自动存盘逻辑"""
+    """详情面板类，独立接管所有属性配置"""
     def __init__(self, main_app, parent=None):
         super().__init__(parent)
         self.main_app = main_app
@@ -61,7 +61,7 @@ class InspectorPanel(QWidget):
 
         self.inspect_form = QWidget()
         
-        # 1. 基础信息使用自定义的快捷键拦截文本控件
+        # 1. 基础信息
         self.lbl_name_tag = QLabel("节点名称：")
         self.inspect_name = InspectorLineEdit(self)
         self.inspect_name.editingFinished.connect(self.save_inspector_changes)
@@ -112,7 +112,7 @@ class InspectorPanel(QWidget):
         self.btn_inspect_color.setStyleSheet("padding: 4px 8px; font-size: 11px;")
         self.btn_inspect_color.clicked.connect(self.select_inspector_color)
 
-        # 6. 备注使用自定义控件
+        # 6. 备注
         self.lbl_notes_tag = QLabel("备注：")
         self.inspect_notes = InspectorTextEdit(self)
         self.inspect_notes.setPlaceholderText("点击此处输入...")
@@ -145,7 +145,6 @@ class InspectorPanel(QWidget):
         color_layout.addWidget(self.btn_inspect_color)
 
         if mode == 0:
-            # 垂直单列排版 (右侧侧边栏)
             form_layout = QVBoxLayout(self.inspect_form)
             form_layout.setContentsMargins(0, 0, 0, 0)
             form_layout.setSpacing(8)
@@ -173,14 +172,12 @@ class InspectorPanel(QWidget):
             form_layout.addWidget(self.lbl_notes_tag)
             form_layout.addWidget(self.inspect_notes)
             
-            form_layout.addStretch()  # 侧边栏末尾加弹簧确保紧凑美观
+            form_layout.addStretch()  
         else:
-            # 水平三列排版 (底部工具栏)
             form_layout = QHBoxLayout(self.inspect_form)
             form_layout.setContentsMargins(0, 0, 0, 0)
             form_layout.setSpacing(25)
 
-            # 第一列：基础属性与模式选择
             col1 = QVBoxLayout()
             col1.setSpacing(6)
             col1.addWidget(self.lbl_name_tag)
@@ -190,7 +187,6 @@ class InspectorPanel(QWidget):
             col1.addWidget(self.lbl_prereq_status)
             form_layout.addLayout(col1)
 
-            # 第二列：进度与打卡登记、明细
             col2 = QVBoxLayout()
             col2.setSpacing(6)
             col2.addWidget(self.inspect_prog_label)
@@ -201,7 +197,6 @@ class InspectorPanel(QWidget):
             col2.addWidget(self.inspect_log_history)
             form_layout.addLayout(col2)
 
-            # 第三列：配色与备注大文本
             col3 = QVBoxLayout()
             col3.setSpacing(6)
             col3.addWidget(self.lbl_color_tag)
@@ -229,19 +224,22 @@ class InspectorPanel(QWidget):
             self.inspect_form.setVisible(True)
             self.inspect_title.setText(f"节点详情: {node.name}")
 
+            # 获取防护状态
+            is_protected = getattr(self.main_app.root_node, "is_protected", False) if self.main_app.root_node else False
+
             self.inspect_name.blockSignals(True)
             self.inspect_name.setText(node.name)
+            self.inspect_name.setEnabled(not is_protected) # 防护时禁用重命名编辑框
             self.inspect_name.blockSignals(False)
 
             self.inspect_notes.setText(node.notes)
             
-            # 同步模式选择器
             self.combo_node_type.blockSignals(True)
             ntype = getattr(node, "node_type", "standard")
             self.combo_node_type.setCurrentIndex(1 if ntype == "strict" else 0)
+            self.combo_node_type.setEnabled(not is_protected) # 防护时禁用模式切换框
             self.combo_node_type.blockSignals(False)
 
-            # 动态检索并组装解锁障碍条件文字
             prereq_texts = []
             for prereq_id in node.prerequisites:
                 prereq_node = self.main_app.all_nodes.get(prereq_id)
@@ -249,7 +247,6 @@ class InspectorPanel(QWidget):
                     status_str = "✓ 已完成" if prereq_node.progress >= 100 else f"未完成 ({prereq_node.progress}%)"
                     prereq_texts.append(f"【{prereq_node.name}】 ({status_str})")
 
-            # 严格模式隐式继承检测
             if not prereq_texts and ntype == "strict":
                 parent_node, _ = self.main_app._find_parent_and_siblings(self.main_app.root_node, node.node_id)
                 if parent_node and parent_node.node_id != self.main_app.root_node.node_id:
@@ -262,12 +259,10 @@ class InspectorPanel(QWidget):
             else:
                 self.lbl_prereq_status.setVisible(False)
 
-            # 丰富统计：累计小时数、天数、次数
             logs = getattr(node, "study_logs", [])
             total_minutes = sum(log.get("minutes", 0) for log in logs)
             total_hours = round(total_minutes / 60.0, 1)
             
-            # 统计独立打卡天数 (去重日期数)
             unique_days = len(set(log.get("date") for log in logs if log.get("date")))
             count = len(logs)
             
@@ -276,22 +271,18 @@ class InspectorPanel(QWidget):
                     f"累计: {total_hours} 小时 ({total_minutes}分) | 打卡: {unique_days} 天 ({count}次)"
                 )
                 
-                # 刷新列表内容
                 self.inspect_log_history.clear()
-                # 倒序呈现历史，最新打卡置顶
                 for idx, log in enumerate(reversed(logs), 1):
                     note_part = f" | {log['note']}" if log.get("note") else ""
                     item_text = f"#{count - idx + 1} {log['date']} | {log['minutes']}分{note_part}"
                     
                     item = QListWidgetItem(item_text)
-                    # 将正序索引绑定在 UserRole
                     item.setData(Qt.UserRole, count - idx)
                     self.inspect_log_history.addItem(item)
             else:
                 self.lbl_study_summary.setText("学习统计：暂无")
                 self.inspect_log_history.clear()
 
-            # 同步更新进度条滑轨的值
             self.inspect_slider.blockSignals(True)
             self.inspect_slider.setValue(node.progress)
             self.inspect_slider.blockSignals(False)
@@ -322,6 +313,9 @@ class InspectorPanel(QWidget):
         new_value = self.inspect_slider.value()
         old_value = node.progress
 
+        if new_value == old_value:
+            return
+
         threshold = 100
         crossed_down = (old_value >= threshold and new_value < threshold)
 
@@ -333,6 +327,7 @@ class InspectorPanel(QWidget):
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply == QMessageBox.Yes:
+                self.main_app.push_undo_state()  # 状态变更前入栈备份
                 node.progress = new_value
                 self.main_app.relock_dependent_nodes(self.main_app.selected_node_id)
             else:
@@ -342,6 +337,7 @@ class InspectorPanel(QWidget):
                 self.inspect_prog_label.setText("学习进度：100%")
                 return
         else:
+            self.main_app.push_undo_state()  # 状态变更前入栈备份
             node.progress = new_value
             if crossed_down:
                 self.main_app.relock_dependent_nodes(self.main_app.selected_node_id)
@@ -354,7 +350,12 @@ class InspectorPanel(QWidget):
         node = self.main_app.all_nodes.get(self.main_app.selected_node_id)
         if not node: return
 
-        node.node_type = "strict" if index == 1 else "standard"
+        target_type = "strict" if index == 1 else "standard"
+        if getattr(node, "node_type", "standard") == target_type:
+            return
+
+        self.main_app.push_undo_state()  # 状态变更前入栈备份
+        node.node_type = target_type
         self.main_app.save_data()
         self.main_app.refresh_ui(force_select_id=self.main_app.selected_node_id)
 
@@ -371,6 +372,7 @@ class InspectorPanel(QWidget):
         dialog = CheckInDialog(node.name, self)
         dialog.setStyleSheet(self.main_app.get_current_theme_class().qss)
         if dialog.exec() == QDialog.Accepted:
+            self.main_app.push_undo_state()  # 状态变更前入栈备份
             log_data = dialog.get_log_data()
             if not hasattr(node, "study_logs") or node.study_logs is None:
                 node.study_logs = []
@@ -403,6 +405,7 @@ class InspectorPanel(QWidget):
             QMessageBox.Yes | QMessageBox.No
         )
         if reply == QMessageBox.Yes:
+            self.main_app.push_undo_state()  # 状态变更前入栈备份
             logs.pop(log_index)
             node.study_logs = logs
             self.main_app.save_data()
@@ -410,12 +413,17 @@ class InspectorPanel(QWidget):
             QMessageBox.information(self, "删除成功", "该记录已成功移除。")
 
     def save_inspector_changes(self):
+        # 验证防护状态：防护状态下不进行任何改名回调
+        if self.main_app.root_node and getattr(self.main_app.root_node, "is_protected", False):
+            return
+            
         if not self.main_app.selected_node_id: return
         node = self.main_app.all_nodes.get(self.main_app.selected_node_id)
         if not node: return
 
         new_name = self.inspect_name.text().strip()
         if new_name and new_name != node.name:
+            self.main_app.push_undo_state()  # 状态变更前入栈备份
             node.name = new_name
             self.main_app.save_data()
             self.main_app.refresh_ui(force_select_id=self.main_app.selected_node_id)
@@ -428,14 +436,19 @@ class InspectorPanel(QWidget):
 
         new_notes = self.inspect_notes.toPlainText().strip()
         if new_notes != node.notes:
+            self.main_app.push_undo_state()  # 状态变更前入栈备份
             node.notes = new_notes
             self.main_app.save_data()
-            self.refresh_ui(force_select_id=self.main_app.selected_node_id)
+            # 修正 self.refresh_ui 逻辑问题为 self.main_app.refresh_ui
+            self.main_app.refresh_ui(force_select_id=self.main_app.selected_node_id)
 
     def apply_preset_color(self, hex_color):
         if not self.main_app.selected_node_id: return
         node = self.main_app.all_nodes.get(self.main_app.selected_node_id)
         if not node: return
+        if node.color == hex_color: return
+        
+        self.main_app.push_undo_state()  # 状态变更前入栈备份
         node.color = hex_color
         self.main_app.save_data()
         self.main_app.refresh_ui(force_select_id=self.main_app.selected_node_id)
@@ -447,6 +460,7 @@ class InspectorPanel(QWidget):
 
         color = QColorDialog.getColor(QColor(node.color), self, "选择卡片颜色")
         if color.isValid():
+            self.main_app.push_undo_state()  # 状态变更前入栈备份
             node.color = color.name()
             self.main_app.save_data()
             self.main_app.refresh_ui(force_select_id=self.main_app.selected_node_id)

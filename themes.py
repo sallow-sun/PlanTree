@@ -2,6 +2,30 @@
 from PySide6.QtGui import QColor, QBrush, QPen, QPainter, QPainterPath, QFont
 from PySide6.QtCore import Qt, QRectF, QPointF
 
+def draw_text_autofit(painter, rect, text, font_family, base_size, is_bold=True, is_italic=False, alignment=Qt.AlignVCenter | Qt.AlignLeft):
+    """自动根据矩形区域的宽高缩小字体大小以适应的辅助绘制函数，支持文本换行"""
+    font = QFont(font_family)
+    font.setBold(is_bold)
+    font.setItalic(is_italic)
+    
+    size = float(base_size)
+    # 不断缩小字体大小直至包围盒高度小于或等于规定高度
+    while size > 5.0:
+        font.setPointSizeF(size)
+        painter.setFont(font)
+        fm = painter.fontMetrics()
+        
+        # 将 QRectF 转换为 QRect，并将对齐标志明确强转为 int，以匹配 PySide6 的签名
+        br = fm.boundingRect(rect.toRect(), int(alignment | Qt.TextWordWrap), text)
+        if br.height() <= rect.height() and br.width() <= rect.width():
+            break
+        size -= 0.5
+
+    font.setPointSizeF(size)
+    painter.setFont(font)
+    painter.drawText(rect, alignment | Qt.TextWordWrap, text)
+
+
 class BaseTheme:
     qss = ""                  
     canvas_bg = "#151515"     
@@ -41,12 +65,14 @@ class ModernDarkTheme(BaseTheme):
         "help": "使用帮助",
         "export": "导出",
         "import": "导入",
+        "undo": "撤销",
+        "redo": "恢复",
         "add": "添加子节点",
         "delete": "删除节点",
         "move_up": "向上/前移",
         "move_down": "向下/后移",
         "prereq": "设置前置",
-        "canvas_bg": "画布背景",  # 新增按钮样式名
+        "canvas_bg": "画布背景",
         "settings": "设置"
     }
 
@@ -66,6 +92,7 @@ class ModernDarkTheme(BaseTheme):
         border-radius: 4px; padding: 6px 12px; font-family: "Microsoft YaHei"; font-weight: bold;
     }
     QPushButton:hover { background-color: #454545; border-color: #007acc; color: #ffffff; }
+    QPushButton:disabled { color: #555555; background-color: #202020; border-color: #333333; }
     QPushButton#dangerButton { background-color: #511c1c; color: #e74c3c; border-color: #722727; }
     QPushButton#dangerButton:hover { background-color: #e74c3c; color: #ffffff; }
     QDialog { background-color: #1e1e1e; }
@@ -174,14 +201,11 @@ class ModernDarkTheme(BaseTheme):
 
         painter.setPen(text_color)
         
-        font_name = QFont("Microsoft YaHei", 10)
-        font_name.setBold(True)
-        painter.setFont(font_name)
-        
         display_name = f"[锁] {node.name}" if is_locked else node.name
         right_margin = 38 if is_locked else (25 if (node.progress == 100 or is_strict) else 10)
-        text_rect = QRectF(10, 8, width - 10 - right_margin, 25)
-        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, display_name)
+        
+        text_rect = QRectF(10, 6, width - 10 - right_margin, 32)
+        draw_text_autofit(painter, text_rect, display_name, "Microsoft YaHei", 10, is_bold=True)
 
         if not is_locked:
             bar_bg_color = QColor("#1e1e1e") if node.color != "#1e1e1e" else QColor("#333333")
@@ -234,6 +258,8 @@ class ConstructivistTheme(BaseTheme):
         "help": "使用帮助",
         "export": "导出",
         "import": "导入",
+        "undo": "撤销",
+        "redo": "恢复",
         "add": "添加子节点",
         "delete": "删除节点",
         "move_up": "向上/前移",
@@ -259,6 +285,7 @@ class ConstructivistTheme(BaseTheme):
         border-radius: 0px; padding: 6px 12px; font-family: "Impact", "Microsoft YaHei"; font-size: 13px;
     }
     QPushButton:hover { background-color: #C0392B; border-color: #1a1a1a; color: #ffffff; }
+    QPushButton:disabled { color: #888888; background-color: #d8c8b0; border-color: #999999; }
     QPushButton#dangerButton { background-color: #511c1c; color: #e74c3c; border-color: #1a1a1a; border-radius: 0px; }
     QPushButton#dangerButton:hover { background-color: #e74c3c; color: #ffffff; }
     QDialog { background-color: #EADEC9; border: 2px solid #1a1a1a; }
@@ -380,14 +407,12 @@ class ConstructivistTheme(BaseTheme):
 
         painter.setPen(text_color)
         
-        font_display = QFont("Impact" if not is_locked else "Microsoft YaHei", 10)
-        font_display.setBold(True)
-        painter.setFont(font_display)
-        
         display_name = node.name
         right_margin = 52 if is_locked else (35 if node.progress == 100 else (18 if is_strict else 10))
-        text_rect = QRectF(18, 8, width - 18 - right_margin, 25) if not is_locked else QRectF(15, 8, width - 15 - right_margin, 25)
-        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, display_name)
+        
+        text_rect = QRectF(18, 6, width - 18 - right_margin, 32) if not is_locked else QRectF(15, 6, width - 15 - right_margin, 32)
+        font_fam = "Impact" if not is_locked else "Microsoft YaHei"
+        draw_text_autofit(painter, text_rect, display_name, font_fam, 10, is_bold=True)
 
         if not is_locked and node.progress < 100:
             gauge_rect = QRectF(width - 20, 10, 10, 50)
@@ -462,6 +487,8 @@ class RococoTheme(BaseTheme):
         "help": "使用帮助",
         "export": "导出",
         "import": "导入",
+        "undo": "撤销",
+        "redo": "恢复",
         "add": "添加子节点",
         "delete": "删除节点",
         "move_up": "向上/前移",
@@ -487,6 +514,7 @@ class RococoTheme(BaseTheme):
         border-radius: 8px; padding: 6px 12px; font-family: "Georgia", "Microsoft YaHei"; font-weight: bold;
     }
     QPushButton:hover { background-color: #F5EFEB; border-color: #C5A028; color: #8B4513; }
+    QPushButton:disabled { color: #9E9285; background-color: #EAE5DF; border-color: #C5B5A5; }
     QPushButton#dangerButton { background-color: #FADBD8; color: #C0392B; border-color: #E6B0AA; border-radius: 8px; }
     QPushButton#dangerButton:hover { background-color: #E6B0AA; color: #78281F; }
     QDialog { background-color: #FDFBF7; border: 1.5px solid #D4AF37; border-radius: 10px; }
@@ -516,7 +544,7 @@ class RococoTheme(BaseTheme):
     QSplitter::handle:horizontal { width: 6px; }
     QSplitter::handle:vertical { height: 6px; }
     QSplitter::handle:hover { background-color: #D4AF37; }
-    QCheckBox { color: #5C4033; font-family: "Georgia", "Microsoft YaHei"; font-size: 13px; }
+    QCheckBox { color: #5C4033; font-family: "Georgia"; font-size: 13px; }
     QCheckBox::indicator { width: 14px; height: 14px; background-color: #FDFBF7; border: 1.5px solid #D4AF37; border-radius: 4px; }
     QCheckBox::indicator:checked { background-color: #FFD1DC; border-color: #D4AF37; }
     QComboBox { background-color: #FDFBF7; color: #5C4033; border: 1.5px solid #D4AF37; border-radius: 6px; padding: 6px 12px; min-width: 200px; font-weight: bold; }
@@ -598,14 +626,11 @@ class RococoTheme(BaseTheme):
 
         painter.setPen(text_color)
         
-        font_name = QFont("Georgia", 9)
-        font_name.setBold(True)
-        painter.setFont(font_name)
-        
         display_name = node.name
         right_margin = 32 if is_locked else (35 if (node.progress == 100 or is_strict) else 15)
-        text_rect = QRectF(15, 10, width - 15 - right_margin, 25)
-        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, display_name)
+        
+        text_rect = QRectF(15, 8, width - 15 - right_margin, 30)
+        draw_text_autofit(painter, text_rect, display_name, "Georgia", 9, is_bold=True)
 
         if not is_locked:
             painter.setFont(QFont("Georgia", 8))
@@ -661,6 +686,8 @@ class TerminalTheme(BaseTheme):
         "help": "使用帮助",
         "export": "导出",
         "import": "导入",
+        "undo": "撤销",
+        "redo": "恢复",
         "add": "添加子节点",
         "delete": "删除节点",
         "move_up": "向上/前移",
@@ -686,6 +713,7 @@ class TerminalTheme(BaseTheme):
         border-radius: 0px; padding: 6px 12px; font-family: "Consolas", monospace; font-weight: bold;
     }
     QPushButton:hover { background-color: #00FF66; color: #030704; }
+    QPushButton:disabled { color: #004411; background-color: #020502; border-color: #005522; }
     QPushButton#dangerButton { background-color: #3a0808; color: #FF3333; border-color: #FF3333; }
     QPushButton#dangerButton:hover { background-color: #FF3333; color: #030704; }
     QDialog { background-color: #030704; border: 2px solid #00FF66; }
@@ -794,17 +822,14 @@ class TerminalTheme(BaseTheme):
             font_secured = QFont("Consolas", 8)
             font_secured.setBold(True)
             painter.setFont(font_secured)
-            painter.drawText(QRectF(width - 65, 5, 60, 15), Qt.AlignRight | Qt.AlignVCenter, "[SECURED]")
+            painter.drawText(QRectF(width - 65, 5, 60, 15), Qt.AlignRight | Qt.AlignVCenter, f"[SECURED]")
 
         painter.setPen(text_color)
-        font_terminal = QFont("Consolas", 9)
-        font_terminal.setBold(True)
-        painter.setFont(font_terminal)
-        
         display_name = f">> {node.name}"
         right_margin = 60 if is_locked else 15
-        text_rect = QRectF(10, 8, width - 10 - right_margin, 20)
-        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, display_name)
+        
+        text_rect = QRectF(10, 6, width - 10 - right_margin, 24)
+        draw_text_autofit(painter, text_rect, display_name, "Consolas", 9, is_bold=True)
 
         if not is_locked:
             bar_w = width - 20
@@ -886,6 +911,8 @@ class SwissMinimalistTheme(BaseTheme):
         "help": "使用帮助",
         "export": "导出",
         "import": "导入",
+        "undo": "撤销",
+        "redo": "恢复",
         "add": "添加子节点",
         "delete": "删除节点",
         "move_up": "向上/前移",
@@ -911,6 +938,7 @@ class SwissMinimalistTheme(BaseTheme):
         border-radius: 0px; padding: 6px 12px; font-family: "Helvetica", "Arial"; font-weight: bold;
     }
     QPushButton:hover { background-color: #002FA7; color: #FFFFFF; border-color: #002FA7; }
+    QPushButton:disabled { color: #aaaaaa; background-color: #e6e6e6; border-color: #cccccc; }
     QPushButton#dangerButton { background-color: #000000; color: #FF3333; border-color: #FF3333; }
     QPushButton#dangerButton:hover { background-color: #FF3333; color: #FFFFFF; }
     QDialog { background-color: #F2F2F2; border: 1px solid #111111; border-radius: 0px; }
@@ -1011,15 +1039,11 @@ class SwissMinimalistTheme(BaseTheme):
             painter.drawText(QRectF(width - 25, 0, 25, 10), Qt.AlignCenter, "OK")
 
         painter.setPen(text_color)
-        
-        font_helvetica = QFont("Arial", 9)
-        font_helvetica.setBold(True)
-        painter.setFont(font_helvetica)
-        
         display_name = node.name.upper()
         right_margin = 35 if is_locked else 15
-        text_rect = QRectF(10, 8, width - 10 - right_margin, 22)
-        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, display_name)
+        
+        text_rect = QRectF(10, 6, width - 10 - right_margin, 28)
+        draw_text_autofit(painter, text_rect, display_name, "Arial", 9, is_bold=True)
 
         if not is_locked:
             prog_w = (width - 20) * (node.progress / 100.0)
